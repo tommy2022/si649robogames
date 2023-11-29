@@ -1,5 +1,7 @@
 # load up the libraries
 import panel as pn
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
 import pandas as pd
 import altair as alt
 from altair_transform import extract_data
@@ -9,10 +11,12 @@ import networkx as nx
 import traceback
 from collections import defaultdict
 import pprint
+import seaborn as sns
 
 # we want to use bootstrap/template, tell Panel to load up what we need
 pn.extension(design='bootstrap')
 pn.extension('vega')
+pn.extension('ipywidgets')
 
 # load up the data
 def getFrame():
@@ -48,16 +52,109 @@ predIdKey = "id"
 predTimeKey = "time"
 predValueKey = "value"
 
+columnKey = "column"
+idKey = "id"
+valueKey = "value"
+
+productivityCol = "Productivity"
+
+all_numeric_cols = ['InfoCore Size', 'AutoTerrain Tread Count', 'Repulsorlift Motor HP', 'Astrogation Buffer Length',
+                'Polarity Sinks', 'Cranial Uplink Bandwidth', 'Sonoreceptors', "Productivity"]
+all_category_cols = ['Axial Piston Model','Arakyd Vocabulator Model','Nanochip Model']
+nominalVars = ['Axial Piston Model','Arakyd Vocabulator Model','Nanochip Model']
+
+def intersection(lst1, lst2):
+    lst3 = [value for value in lst1 if value in lst2]
+    return lst3
+
+def getNumericAndCategoryCols(dfDict):
+    global all_numeric_cols, all_category_cols
+    
+    curr_columns = list(dfDict.keys())
+
+    numeric = intersection(all_numeric_cols, curr_columns)
+    category = intersection(all_category_cols, curr_columns)
+    return numeric, category
+
+
+# def getProductivityPlot(df, selected_column):
+#     global nominalVars, productivityPlot
+#     plt.figure()
+    
+#     plt.scatter(df[selected_column], df[productivityCol])
+#     if selected_column not in nominalVars:
+#       sns.regplot(x=df[selected_column], y=df[productivityCol])
+
+#     plt.xlabel(selected_column)
+#     plt.ylabel(productivityCol)
+#     plt.title(f'Scatter Plot of {selected_column} vs Productivity')
+    
+#     figure = plt.gcf()
+#     plt.show()
+#     productivityPlot.object = figure
+    
+
+def updateParts(allParts, robotDf):
+    global partsInfoObject, info_test, productivityPlot
+    
+    partsInfoDict = defaultdict(dict)
+    
+    nonNanProductivity = robotDf[~robotDf[productivityCol].isna()][productivityCol]
+    robotIds = nonNanProductivity.index
+    robotProductivity = list(nonNanProductivity)
+    for i, id in enumerate(robotIds):
+        partsInfoDict[productivityCol][id] = robotProductivity[i]
+    
+    print(nonNanProductivity)
+    
+    # print(allParts, "\n\n\n")
+    
+    for parts in allParts:
+        column = parts[columnKey]
+        id = parts[idKey]
+        value = parts[valueKey]
+        partsInfoDict[column][id] = value
+    
+    # print(partsInfoDict, "\n\n\n")
+    
+    partsInfoDf = pd.DataFrame.from_dict(partsInfoDict)
+    numeric_cols, category_cols = getNumericAndCategoryCols(partsInfoDict)
+    
+    partsInfoDf[numeric_cols] = partsInfoDf[numeric_cols].apply(pd.to_numeric, errors='coerce')
+    partsInfoDf[category_cols] = partsInfoDf[category_cols].astype('category')
+    
+    correlation_matrix = partsInfoDf[numeric_cols].corr()
+    correlation_melted = pd.melt(correlation_matrix.reset_index(), id_vars='index')
+
+    # Rename the columns
+    correlation_melted.columns = ['Variable 1', 'Variable 2', 'Correlation']
+
+    # Create the heatmap using Altair
+    correlationPlot = alt.Chart(correlation_melted).mark_rect().encode(
+        x='Variable 1:N',
+        y='Variable 2:N',
+        color='Correlation:Q'
+    ).properties(
+        title='Correlation Heatmap'
+    )
+    
+    partsInfoObject.object = correlationPlot
+    
+
 def update():
     try:
-        global game, static_text, network_view, tree_view, info_view, hints_view, predDict, robo_time_chart, robo_expiry_sorted
+        global game, static_text, tree_view, info_view, hints_view, predDict, robo_time_chart, robo_expiry_sorted
         robo_expiry_sorted.object = getRoboSorted()
         gt = game.getGameTime()
-        network_view.object = game.getNetwork()
+        # network_view.object = game.getNetwork()
         tree_view.object = game.getTree()
-        info_view.object = game.getRobotInfo()
+        robotDf = game.getRobotInfo()
+        info_view.object = robotDf
         hints_view.object = game.getHints()
         allPred = game.getAllPredictionHints()
+        allParts = game.getAllPartHints()
+        
+        updateParts(allParts, robotDf)
         
         predDict = defaultdict(lambda: defaultdict(list))
         for pred in allPred:
@@ -130,13 +227,15 @@ template = pn.template.BootstrapTemplate(
     sidebar=sidecol,
 )
 
-network_view = pn.pane.JSON({"message":"waiting for game to start"})
-tree_view = pn.pane.JSON({"message":"waiting for game to start"})
+# network_view = pn.pane.JSON({"message":"network waiting for game to start"})
+partsInfoObject = pn.pane.Vega(None)
+tree_view = pn.pane.JSON({"message":"treeview waiting for game to start"})
 info_view = pn.pane.DataFrame()
-hints_view = pn.pane.JSON({"message":"waiting for game to start"})
+hints_view = pn.pane.JSON({"message":"hints waiting for game to start"})
 robo_time_chart = pn.pane.Vega(None)
 robo_expiry_sorted = pn.pane.Vega(None)
 curr_selected_robot = 1
+productivityPlot = pn.pane.Matplotlib(None)
 
 maincol = pn.Column()
 
@@ -144,7 +243,7 @@ def getTimeChart():
     global curr_selected_robot, predDict
     # print(f"\n\n\n textInput = {textInput} \n\n\n")
     
-    # try:
+    # try:P
     #     robotId = int(textInput)
     # except:
     #     return 'Please enter an integer'
@@ -235,21 +334,50 @@ def getRoboSorted():
         width=800
     )
 
+def sendRobotRequest(textInput):
+    print("sending robot info")
+    try:
+        robots = textInput.split(",")
+        apiParam = {}
+        for robot in robots:
+            robotId, guessVal = robot.split(":")
+            robotId, guessVal = int(robotId), int(guessVal)
+            print(f"{robotId}:{guessVal}")
+            apiParam[robotId] = guessVal
+            
+        game.setBets(apiParam)
+        return "Updated!"
+    except:
+        return "Please enter in the format ***id1: guess1, id2: guess2***"
+
 robotIdInput = pn.widgets.TextInput(placeholder="Robot ID")
 
 rowChart = pn.Row(pn.bind(updateCurrSelected, robotIdInput))
 
+robotInterstId = pn.widgets.TextInput(placeholder="Interested Robot ID in format id1: guess1, id2: guess2")
+
+robotRequestResult = pn.Row(pn.bind(sendRobotRequest, robotInterstId))
+
 
 grid = pn.GridBox(ncols=2,nrows=3)
-grid.append(network_view)
+# grid.append(network_view)
+# grid.append(productivityPlot)
+grid.append(info_view)
+grid.append(partsInfoObject)
 grid.append(tree_view)
 grid.append(info_view)
 grid.append(hints_view)
 
+
 # timechart = getTimeChart(3)
 maincol.append(robo_time_chart)
+
 maincol.append(rowChart)
 maincol.append(robotIdInput)
+
+maincol.append(robotRequestResult)
+maincol.append(robotInterstId)
+
 maincol.append("Upcoming robot and its popularity in the social network:")
 maincol.append(robo_expiry_sorted)
 maincol.append(grid)
