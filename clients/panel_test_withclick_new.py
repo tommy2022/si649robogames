@@ -468,8 +468,12 @@ def getRoboSorted():
     # print(gt)
     currTime = 100 - gt['unitsleft']
     
-    filteredRobotRecords = getFilteredRobotRecords(sortedRobotRecords, robotDegrees, socialnet, robotRecords, currTime=currTime)
-    
+    tree = game.getTree()
+    genealogy = nx.tree_graph(tree)
+
+    filteredRobotRecords = getFilteredRobotRecords(sortedRobotRecords, robotDegrees, genealogy, robotRecords, currTime=currTime)
+
+
     robotDfWithRank = pd.DataFrame.from_records(filteredRobotRecords)
     timeSeries = alt.Chart(robotDfWithRank).mark_circle(size=100).encode(
         alt.X('rank:N', axis=None),
@@ -500,6 +504,11 @@ def getRoboSorted():
         global curr_selected_robot
         curr_selected_robot = int(b.description)
         print(f"Clicked ID: {curr_selected_robot}")
+        getRobotParts()
+        print('updated robot feature display')
+        updatePreviousBets()
+        print('updated previous bets')
+
 
     # Calculate the width for each button
     button_width = f'{800 // len(robotDfWithRank)}px'
@@ -509,6 +518,7 @@ def getRoboSorted():
     for id in robotDfWithRank['id']:
         button = ipywidgets.Button(description=str(id), layout=ipywidgets.Layout(width=button_width))
         button.style.font_size = '11px'
+        button.style.button_color = 'white'
         button.on_click(on_button_clicked)
         buttons.append(button)
 
@@ -573,7 +583,15 @@ def getFilteredRobotRecords(sortedRobotRecords, robotDegrees, network, roboDict,
             continue
         robot["rank"] = currRank
         robot["degree"] = robotDegrees[robot["id"]]
-        robot['productivity'] = getAverageProductivity(network.neighbors(robot["id"]), roboDict)
+        neighbors = nx.all_neighbors(network, robot["id"])
+        twoDistAway = set()
+        for neighbor in neighbors:
+            twoDist = nx.all_neighbors(network, neighbor)
+            for node in twoDist:
+                twoDistAway.add(node)
+
+
+        robot['productivity'] = getAverageProductivity(twoDistAway, roboDict)
         currRank += 1
         filteredRobotRecords.append(robot)
         currCount += 1
@@ -635,7 +653,7 @@ def updatePartsCheck(partName):
     drawProductivityPlots()
     
 def drawProductivityPlots():
-    global game, partNames, partsIsChecked, partsProductivityPlot
+    global game, partNames, partsIsChecked, partsProductivityPlot, curr_selected_robot
     if game is None:
         return
     partsInfoDict = defaultdict(dict)
@@ -647,6 +665,7 @@ def drawProductivityPlots():
     robotProductivity = list(nonNanProductivity)
     for i, id in enumerate(robotIds):
         partsInfoDict[productivityCol][id] = robotProductivity[i]
+        partsInfoDict["id"][id] = id
     if len(partsInfoDict[productivityCol]) == 0:
         return
     
@@ -659,24 +678,32 @@ def drawProductivityPlots():
     # print(partsInfoDict, "\n\n\n")
     
     partsInfoDf = pd.DataFrame.from_dict(partsInfoDict)
+    partsInfoDf['id'] = partsInfoDf['id'].astype("Int64")
     
     for partName in partNames:
         # print(f"{partName} checked val is {partsIsChecked[partName]}")
         if not partsIsChecked[partName]:
             partsProductivityPlot[partName].object = None
         
-        partsProductivityPlot[partName].object = drawProductivityPlotPerPart(partsInfoDf, partName)
+        curr_robot_val = partsInfoDict[partName][curr_selected_robot] if curr_selected_robot in partsInfoDict[partName] else None
+        partsProductivityPlot[partName].object = drawProductivityPlotPerPart(partsInfoDf, partName, curr_robot_val)
         
-def drawProductivityPlotPerPart(partsInfoDf, partName):
+def drawProductivityPlotPerPart(partsInfoDf, partName, curr_robot_val):
     fig = alt.Chart(partsInfoDf).mark_point(filled=True).encode(
         y=f'{productivityCol}:Q',
         x=f'{partName}:Q',
-        tooltip=['Productivity', f'{partName}']
+        tooltip=['Productivity', f'{partName}'],
     ).properties(
         title=f'Plot for {partName}',
         width=100,
         height=100,
     )
+
+    if curr_robot_val is not None:
+        expiryLine = alt.Chart(pd.DataFrame({"x": [curr_robot_val]})).mark_rule(color='red').encode(
+            x=alt.X('x:Q')
+        )
+        return fig + fig.transform_regression(partName, productivityCol).mark_line() + expiryLine
     
     return fig + fig.transform_regression(partName, productivityCol).mark_line() 
 
