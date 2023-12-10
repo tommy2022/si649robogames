@@ -617,7 +617,7 @@ def updatePartsCheck(partName):
     drawProductivityPlots()
     
 def drawProductivityPlots():
-    global game, partNames, partsIsChecked, partsProductivityPlot
+    global game, partNames, partsIsChecked, partsProductivityPlot, curr_selected_robot
     if game is None:
         return
     partsInfoDict = defaultdict(dict)
@@ -629,6 +629,7 @@ def drawProductivityPlots():
     robotProductivity = list(nonNanProductivity)
     for i, id in enumerate(robotIds):
         partsInfoDict[productivityCol][id] = robotProductivity[i]
+        partsInfoDict["id"][id] = id
     if len(partsInfoDict[productivityCol]) == 0:
         return
     
@@ -641,26 +642,34 @@ def drawProductivityPlots():
     # print(partsInfoDict, "\n\n\n")
     
     partsInfoDf = pd.DataFrame.from_dict(partsInfoDict)
+    partsInfoDf['id'] = partsInfoDf['id'].astype("Int64")
     
     for partName in partNames:
         # print(f"{partName} checked val is {partsIsChecked[partName]}")
         if not partsIsChecked[partName]:
             partsProductivityPlot[partName].object = None
         
-        partsProductivityPlot[partName].object = drawProductivityPlotPerPart(partsInfoDf, partName)
+        curr_robot_val = partsInfoDict[partName][curr_selected_robot] if curr_selected_robot in partsInfoDict[partName] else None
+        partsProductivityPlot[partName].object = drawProductivityPlotPerPart(partsInfoDf, partName, curr_robot_val)
         
-def drawProductivityPlotPerPart(partsInfoDf, partName):
+def drawProductivityPlotPerPart(partsInfoDf, partName, curr_robot_val):
     fig = alt.Chart(partsInfoDf).mark_point(filled=True).encode(
         y=f'{productivityCol}:Q',
         x=f'{partName}:Q',
-        tooltip=['Productivity', f'{partName}']
+        tooltip=['Productivity', f'{partName}'],
     ).properties(
         title=f'Plot for {partName}',
         width=100,
         height=100,
     )
+
+    if curr_robot_val is not None:
+        expiryLine = alt.Chart(pd.DataFrame({"x": [curr_robot_val]})).mark_rule(color='red').encode(
+            x=alt.X('x:Q')
+        )
+        return fig + fig.transform_regression(partName, productivityCol).mark_line() + expiryLine
     
-    return fig + fig.transform_regression(partName, productivityCol).mark_line() 
+    return fig + fig.transform_regression(partName, productivityCol).mark_line()
 
 def requestInterestedRobots(input):
     global previousBets
