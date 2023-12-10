@@ -461,7 +461,10 @@ def getRoboSorted():
     # print(gt)
     currTime = 100 - gt['unitsleft']
     
-    filteredRobotRecords = getFilteredRobotRecords(sortedRobotRecords, robotDegrees, socialnet, robotRecords, currTime=currTime)
+    tree = game.getTree()
+    genealogy = nx.tree_graph(tree)
+    
+    filteredRobotRecords = getFilteredRobotRecords(sortedRobotRecords, robotDegrees, genealogy, robotRecords, currTime=currTime)
     
     robotDfWithRank = pd.DataFrame.from_records(filteredRobotRecords)
     timeSeries = alt.Chart(robotDfWithRank).mark_circle(size=100).encode(
@@ -542,7 +545,17 @@ def getFilteredRobotRecords(sortedRobotRecords, robotDegrees, network, roboDict,
             continue
         robot["rank"] = currRank
         robot["degree"] = robotDegrees[robot["id"]]
-        robot['productivity'] = getAverageProductivity(network.neighbors(robot["id"]), roboDict)
+        
+        
+        neighbors = nx.all_neighbors(network, robot["id"])
+        twoDistAway = set()
+        for neighbor in neighbors:
+            twoDist = nx.all_neighbors(network, neighbor)
+            for node in twoDist:
+                twoDistAway.add(node)
+                
+                
+        robot['productivity'] = getAverageProductivity(twoDistAway, roboDict)
         currRank += 1
         filteredRobotRecords.append(robot)
         currCount += 1
